@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ADVERTENCIA / DISCLAIMER (leer antes de usar):
+  Este .alp es un ESQUELETO de mejor esfuerzo. El formato .alp de AnyLogic 8.x
+  usa IDs internos (long), GUIDs, coordenadas de presentacion y referencias
+  cruzadas que el IDE genera y valida al guardar. Un .alp escrito a mano NO es
+  garantia de abrir limpio: AnyLogic puede rechazarlo o "reparar" partes.
+  RUTA CONFIABLE: crear el modelo en el IDE siguiendo el Entregable 1 (estructura
+  de bloques) y pegar el codigo Java del Entregable 2. Este archivo sirve como
+  referencia de la jerarquia de agentes/parametros esperada, no como modelo
+  ejecutable garantizado.
+-->
+<Model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Format="8.0">
+  <Id>1</Id>
+  <Name>LogisticaJugo</Name>
+  <EngineTimeUnit>DAY</EngineTimeUnit>
+  <ModelTimeUnit>DAY</ModelTimeUnit>
+
+  <!-- ================= AGENTE Deposito ================= -->
+  <ActiveObjectClass>
+    <Id>10</Id>
+    <Name>Deposito</Name>
+    <Parameters>
+      <Parameter><Id>101</Id><Name>region</Name><Type>String</Type><DefaultValue>"Tucuman"</DefaultValue></Parameter>
+      <Parameter><Id>102</Id><Name>tarifaAlmacenamiento</Name><Type>double</Type><DefaultValue>0.0</DefaultValue></Parameter>
+      <Parameter><Id>103</Id><Name>capacidadMaxima</Name><Type>double</Type><DefaultValue>0.0</DefaultValue></Parameter>
+      <Parameter><Id>104</Id><Name>costoTransporteUnitario</Name><Type>double</Type><DefaultValue>0.0</DefaultValue></Parameter>
+    </Parameters>
+    <Variables>
+      <Variable><Id>110</Id><Name>nivelActual</Name><Type>double</Type><InitialValue>0</InitialValue></Variable>
+      <Variable><Id>111</Id><Name>costoAlmacenAcum</Name><Type>double</Type><InitialValue>0</InitialValue></Variable>
+      <Variable><Id>112</Id><Name>costoTransporteAcum</Name><Type>double</Type><InitialValue>0</InitialValue></Variable>
+    </Variables>
+    <Functions>
+      <Function><Id>120</Id><Name>capacidadDisponible</Name><ReturnType>double</ReturnType>
+        <Body>return capacidadMaxima - nivelActual;</Body></Function>
+      <Function><Id>121</Id><Name>puedeRecibir</Name><ReturnType>boolean</ReturnType>
+        <Arguments><Argument><Name>tn</Name><Type>double</Type></Argument></Arguments>
+        <Body>return (nivelActual + tn) &lt;= capacidadMaxima + 1e-9;</Body></Function>
+      <Function><Id>122</Id><Name>recibirLote</Name><ReturnType>void</ReturnType>
+        <Arguments><Argument><Name>tn</Name><Type>double</Type></Argument></Arguments>
+        <Body>nivelActual += tn; costoTransporteAcum += tn * costoTransporteUnitario;</Body></Function>
+      <Function><Id>123</Id><Name>acumularAlmacenamientoDia</Name><ReturnType>void</ReturnType>
+        <Body>costoAlmacenAcum += nivelActual * tarifaAlmacenamiento;</Body></Function>
+    </Functions>
+  </ActiveObjectClass>
+
+  <!-- ================= AGENTE Lote ================= -->
+  <ActiveObjectClass>
+    <Id>20</Id>
+    <Name>Lote</Name>
+    <Parameters>
+      <Parameter><Id>201</Id><Name>tn</Name><Type>double</Type><DefaultValue>1.0</DefaultValue></Parameter>
+    </Parameters>
+    <Variables>
+      <Variable><Id>210</Id><Name>destino</Name><Type>Deposito</Type><InitialValue>null</InitialValue></Variable>
+    </Variables>
+  </ActiveObjectClass>
+
+  <!-- ================= AGENTE Main ================= -->
+  <ActiveObjectClass>
+    <Id>30</Id>
+    <Name>Main</Name>
+    <Parameters>
+      <Parameter><Id>301</Id><Name>capacidadCamara</Name><Type>double</Type><DefaultValue>5000</DefaultValue></Parameter>
+      <Parameter><Id>302</Id><Name>capacidadCamion</Name><Type>double</Type><DefaultValue>30</DefaultValue></Parameter>
+      <Parameter><Id>303</Id><Name>tiempoViajeTucuman</Name><Type>double</Type><DefaultValue>18</DefaultValue></Parameter>
+      <Parameter><Id>304</Id><Name>tiempoViajeBsAs</Name><Type>double</Type><DefaultValue>16</DefaultValue></Parameter>
+      <Parameter><Id>305</Id><Name>pesoDeposito</Name><Type>double[]</Type><DefaultValue>new double[]{0,0,0,0,0}</DefaultValue></Parameter>
+    </Parameters>
+    <Variables>
+      <Variable><Id>310</Id><Name>costoTransporteTotal</Name><Type>double</Type><InitialValue>0</InitialValue></Variable>
+      <Variable><Id>311</Id><Name>costoAlmacenTotal</Name><Type>double</Type><InitialValue>0</InitialValue></Variable>
+    </Variables>
+    <EmbeddedObjects>
+      <EmbeddedObject><Id>320</Id><Name>depositos</Name><Class>Deposito</Class><Replication>5</Replication></EmbeddedObject>
+    </EmbeddedObjects>
+
+    <!-- Diagrama de proceso (Process Modeling Library) -->
+    <FlowChart>
+      <Block Type="Source" Id="401" Name="source">
+        <Property Name="arrivalType">RATE</Property>
+        <Property Name="rate">produccionActual()</Property>
+        <Property Name="newAgent">Lote</Property>
+      </Block>
+      <Block Type="Queue" Id="402" Name="camaraPropia">
+        <Property Name="capacity">5000</Property>
+      </Block>
+      <Block Type="Delay" Id="403" Name="prepararDespacho">
+        <Property Name="onEnter">asignarDestino(agent, usarOptimizacion);</Property>
+      </Block>
+      <Block Type="SelectOutput5" Id="404" Name="ruteoDeposito">
+        <Property Name="cond1">agent.destino == depositos.get(0)</Property>
+        <Property Name="cond2">agent.destino == depositos.get(1)</Property>
+        <Property Name="cond3">agent.destino == depositos.get(2)</Property>
+        <Property Name="cond4">agent.destino == depositos.get(3)</Property>
+        <!-- salida 5 = depositos.get(4) por defecto -->
+      </Block>
+      <Block Type="Delay" Id="405" Name="transporte">
+        <Property Name="delayTime">tiempoViaje(agent.destino)</Property>
+        <Property Name="onExit">agent.destino.recibirLote(agent.tn);</Property>
+      </Block>
+      <Block Type="Sink" Id="406" Name="llegadaDeposito"/>
+      <Connector From="401" To="402"/>
+      <Connector From="402" To="403"/>
+      <Connector From="403" To="404"/>
+      <Connector From="404" To="405"/>
+      <Connector From="405" To="406"/>
+    </FlowChart>
+
+    <Events>
+      <Event><Id>430</Id><Name>eventCostoDiario</Name><Trigger>CYCLIC</Trigger>
+        <Recurrence>1</Recurrence><Unit>DAY</Unit>
+        <Action>for (Deposito d : depositos) d.acumularAlmacenamientoDia(); costoTotalActual();</Action>
+      </Event>
+    </Events>
+  </ActiveObjectClass>
+
+  <!-- ================= EXPERIMENTOS ================= -->
+  <Experiment Type="Simulation">
+    <Id>500</Id><Name>Simulation</Name><TopLevelAgent>Main</TopLevelAgent>
+    <StopTime>365</StopTime><StopMode>STOP_TIME</StopMode>
+  </Experiment>
+
+  <Experiment Type="Optimization">
+    <Id>501</Id><Name>Optimization</Name><TopLevelAgent>Main</TopLevelAgent>
+    <StopTime>365</StopTime>
+    <Objective Mode="MINIMIZE">root.costoTotalActual()</Objective>
+    <DecisionVariables>
+      <Variable><Name>root.pesoDeposito[0]</Name><Min>0</Min><Max>1</Max><Step>0.01</Step></Variable>
+      <Variable><Name>root.pesoDeposito[1]</Name><Min>0</Min><Max>1</Max><Step>0.01</Step></Variable>
+      <Variable><Name>root.pesoDeposito[2]</Name><Min>0</Min><Max>1</Max><Step>0.01</Step></Variable>
+      <Variable><Name>root.pesoDeposito[3]</Name><Min>0</Min><Max>1</Max><Step>0.01</Step></Variable>
+      <Variable><Name>root.pesoDeposito[4]</Name><Min>0</Min><Max>1</Max><Step>0.01</Step></Variable>
+    </DecisionVariables>
+    <Iterations>500</Iterations>
+  </Experiment>
+</Model>
