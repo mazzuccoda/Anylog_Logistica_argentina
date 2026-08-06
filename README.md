@@ -28,6 +28,7 @@ Costo total anual = Σ transporte + Σ almacenamiento  →  MINIMIZAR
 | `parametros_jugo.xlsx` | Plantilla de parámetros (hojas: Depositos, ProduccionMensual, Globales) para importar con el Excel connector |
 | `gen_excel.py` | Script que regenera `parametros_jugo.xlsx` (requiere `openpyxl`) |
 | `model/LogisticaJugo.alp` | Esqueleto XML del modelo (best-effort, ver disclaimer en el .md) |
+| `flow/` | Guía didáctica (con ejemplos numéricos) de la lógica de decisión: cómo se elige dónde almacenar y cómo se elige a qué depósito entregar cada lote según costo y capacidad operativa |
 
 ## Cómo usar
 
