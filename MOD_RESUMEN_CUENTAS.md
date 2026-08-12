@@ -144,6 +144,57 @@ DEPOSITO`, USD por tramo: `[33600, 38700, 35800, 27300, 123300, 276400,
 zip traiga `material` en vez de (o además de) `producto` para separar `JUGO`
 en `JCL`/`JCCL`/`PCL`.
 
-## 6. Preguntas abiertas (única parte que sigue bloqueada)
+## 6. Estado: implementado — pendiente de correr en AnyLogic
 
-Ver preguntas en el chat.
+Confirmado por el usuario: `FLETE DEPOSITO` = `FLETE_PRODUCTO`, y usar el join
+por `id_asignacion` para las toneladas de las cuentas por contenedor está
+bien si llega al mismo resultado.
+
+**MOD aplicado** en `mazzuccoda/Anylogic_log_arg_2026`, rama
+[`claude/adr-071-material-auditoria`](https://github.com/mazzuccoda/Anylogic_log_arg_2026/pull/new/claude/adr-071-material-auditoria)
+(ADR-071, esquema `ADR-064.2`): `costos_eventos.csv` y `asignaciones_elegidas.csv`
+ahora exportan `material`. `model_src/` y `MANIFIESTO.md` regenerados con
+`tools/exportar_modelo.py`; XML validado. **Falta el único paso que este
+entorno no puede hacer:** compilar y correr `E-00` en el IDE de AnyLogic
+PLE con `datos/Maestro_Simulacion.xlsx` y confirmar que reconcilia igual
+que ADR-070 (8 453 167 USD de caja, 29 439 tn exportadas) — no debería
+cambiar ningún número, es sólo plumbing de exportación.
+
+**Un límite que apareció al construir el join de Tn:** `FLETE_PRODUCTO`
+(→ `FLETE DEPOSITO`) se cobra contra el **pedido**, no contra un contenedor
+— su `id_asignacion` en `costos_eventos.csv` está **siempre vacío**, así que
+no hay join posible contra `asignaciones_elegidas.csv` para esa cuenta. La
+columna **USD** de `FLETE DEPOSITO` sale completa igual; la columna **Tn**
+de esa única cuenta queda pendiente (0) hasta resolver un join distinto (por
+`codigo_pedido`, más ambiguo porque un pedido puede tener varias
+asignaciones). Para las otras 6 cuentas por contenedor (`ROUND TRIP`,
+`CONSOLIDADO`, `TERMINAL`, `CROSS DOCKING`, `GASTOS THC`, `DESPACHANTE`) el
+join sí funciona limpio, dividiendo `toneladas_despachadas` de la asignación
+por `contenedores_creados` para no contar el total de la asignación una vez
+por cada contenedor/evento.
+
+## 7. Script del reporte, ya armado y probado
+
+`armar_resumen_cuentas.py` (en este repo) lee `costos_eventos.csv` +
+`asignaciones_elegidas.csv` de la carpeta de resultados y completa
+`Resumen_cuentas.xlsx`. Verificado con el `Ejemplo_11.zip` original: los
+totales de USD por material/cuenta/tramo coinciden exactamente con el
+pivot manual de la sección 1 (ej. `JUGO → FLETE DEPOSITO`:
+`[33600, 38700, 35800, 27300, 123300, 276400, 225000, 287900, 190400,
+164900, 137600, 109600]`), y el join de Tn por contenedor da valores
+plausibles para `ROUND TRIP` (antes en 0).
+
+**No lo corrí contra el zip original como entrega final** porque ese zip
+no tiene columna `material` (es anterior al MOD) — el script cae a
+`producto` como aproximación, que no calza con los 5 códigos de la
+plantilla (`AEL`/`CDL`/`JCCL`/`PCL` no existen todavía sin el material real
+de `JCCL`/`PCL` separado de `JCL`) y el Excel sale vacío a propósito, en vez
+de inventar un reparto entre materiales que nadie pidió. Corré:
+
+```
+python3 armar_resumen_cuentas.py <carpeta_resultados_nueva_corrida> Resumen_cuentas.xlsx salida.xlsx
+```
+
+apenas tengas una corrida de `E-00` hecha con el modelo parchado, y va a
+salir completo (salvo el Tn de `FLETE DEPOSITO`, con el aviso explícito de
+por qué).
