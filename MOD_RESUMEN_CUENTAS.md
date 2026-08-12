@@ -2,124 +2,148 @@
 
 > Análisis de factibilidad: ¿el output del modelo (`Ejemplo_11.zip`, esquema
 > `ADR-064.1`) permite armar el `Resumen_cuentas.xlsx` requerido? Qué falta y
-> qué hay que confirmar antes de tocar el modelo.
+> qué cambio concreto hay que aplicar.
 
-## 0. Punto crítico: el zip NO sale de este repositorio
+## 0. El modelo real es otro repo — ya identificado
 
-`Ejemplo_11.zip` es la salida de un modelo AnyLogic con:
-- 3 productos (`ACEITE`, `CASCARA`, `JUGO`)
-- reservas, alternativas de asignación, consolidación en terminal, cross-dock,
-  portacontenedores, múltiples sitios reales (ZARATE, T4, DODERO, BOREAS,
-  FRINOA, NORRY, GRUPO_PAZ, CONTROL_UNION, RUTA9, PLANTA)
-- 6 tablas de auditoría (`decisiones_alternativas`, `asignaciones_elegidas`,
-  `ejecucion_arcos`, `costos_eventos`, `snapshot_inventario`,
-  `capacidad_por_dia`) versionadas con manifiesto/esquema JSON.
+`Ejemplo_11.zip` no sale de este repositorio (acá vive un modelo simple de un
+solo producto y 5 depósitos). Sale de
+**[`mazzuccoda/Anylogic_log_arg_2026`](https://github.com/mazzuccoda/Anylogic_log_arg_2026)**
+(confirmado: `AuditoriaRed.VERSION_ESQUEMA = "ADR-064.1"` en ese repo coincide
+exacto con el `version_esquema` del manifiesto del zip). Es un proyecto
+grande y maduro — 70 ADRs, contrato de datos, plan de validación, changelog
+detallado — con un proceso propio para tocar el `.alp`: se parchea el XML a
+mano con reemplazos de texto verificados como únicos, se valida el XML, se
+regenera `model_src/`+`MANIFIESTO.md` con `tools/exportar_modelo.py`, y la
+corrida real en AnyLogic PLE 8.9.9 la hace el usuario (esa parte no se puede
+hacer desde este entorno). Todo lo que sigue está pensado para respetar ese
+proceso, no para saltearlo.
 
-Este repo (`mazzuccoda/anylog_logistica_argentina`, rama actual) contiene un
-modelo **distinto y mucho más simple**: un único producto "jugo", cámara
-propia + 5 depósitos (3 Tucumán / 2 Buenos Aires), sin terminales, sin
-consolidación, sin contenedores. No hay ningún archivo en el repo (`.alp`,
-`.java`, `.md`) que genere las columnas `categoria`, `id_contenedor`,
-`circuito`, etc. que aparecen en el zip.
+Lectura de solo-lectura de ese repo (clonado en este entorno para el
+análisis): commit `2660913` (2026-08-11).
 
-**Conclusión:** el modelo real que hay que modificar para producir el
-Resumen no vive en este repositorio. Las propuestas de MOD de este
-documento están escritas para poder aplicarse sobre ese modelo (el que
-generó `Ejemplo_11.zip`), pero yo no tengo ese código para editarlo acá.
-Ver pregunta 1 más abajo.
+## 1. Confirmado: el modelo YA tiene el concepto "material" (ADR-067/069)
 
-## 1. ¿Es posible armar el resumen? — Sí, parcialmente, con `costos_eventos.csv`
+`ADR-067 — Material como dimensión física del inventario` ya implementó
+exactamente los 5 códigos que pide el Resumen. La tabla de validación
+`V-MAESTRO-03` de ese repo lo dice literal:
 
-La hoja pedida es una tabla `material × Cuenta × Unidad` con 12 columnas de
-antigüedad (`0-31 … 334-999`, días de campaña acumulados ≈ 12 "meses").
+> `JUGO/JCL` asigna 15.842 tn de 16.961 pedidas —su disponibilidad de
+> campaña—, mientras `JCCL` (142) y `PCL` (133) asignan su demanda completa...
+> `CASCARA/CDL` 12.261 y `ACEITE/AEL` 1.250, completos.
 
-`costos_eventos.csv` (105.461 filas) ya trae, por evento de costo:
-`categoria`, `producto`, `dia_campania`, `unidad`, `cantidad`, `importe_usd`.
-Mapeo directo `categoria → Cuenta`:
+O sea, el mapeo `producto → material` es:
 
-| categoria (zip)      | Cuenta (Resumen)      | Unidad del evento |
-|---|---|---|
-| `IN_DEPOSITO`         | ALMACENAJE (IN)        | `USD_TN` (cantidad = Tn reales) |
-| `ALMACENAMIENTO`      | ALMACENAJE (STORAGE)   | `USD_TN_DIA` (cantidad = Tn en depósito ese día) |
-| `OUT_DEPOSITO`        | ALMACENAJE (OUT)       | `USD_TN` (cantidad = Tn reales) |
-| `ROUND_TRIP`          | ROUND TRIP              | `USD_CONTENEDOR` (cantidad = 1 contenedor) |
-| `FLETE_PRODUCTO`      | FLETE DEPOSITO *(?)*    | `USD_VIAJE` (cantidad = 1 viaje) |
-| `CONSOLIDACION`       | CONSOLIDADO             | `USD_CONTENEDOR` |
-| `COSTO_TERMINAL`      | TERMINAL                | `USD_CONTENEDOR` |
-| `CROSS_DOCK`          | CROSS DOCKING           | `USD_CONTENEDOR` |
-| `THC`                 | GASTOS THC              | `USD_CONTENEDOR` |
-| `DESPACHANTE`         | DESPACHANTE             | `USD_CONTENEDOR` |
-| `OPORTUNIDAD_FRIO`    | *(sin fila en el Resumen)* | siempre $0 en esta corrida (cuenta económica/sombra) |
-| `PENALIDAD_SOBRECARGA`| *(sin fila en el Resumen)* | siempre $0 en esta corrida |
+| producto (zip) | material(es) |
+|---|---|
+| `ACEITE` | `AEL` |
+| `CASCARA` | `CDL` |
+| `JUGO` | `JCL`, `JCCL`, `PCL` |
 
-Con esto armé un prototipo (pivot en Python sobre `costos_eventos.csv`,
-bucketizando por `dia_campania` en los 12 rangos del Resumen). **La columna
-USD se completa sin problema para las 9 cuentas mapeadas.** Ejemplo real de
-la corrida (`JUGO → FLETE DEPOSITO`, USD por bucket):
+Esto cierra exactamente las 5 filas de "material" del Resumen. **No hace
+falta inventar ni pedir un mapeo** — ya está resuelto en el modelo, sólo
+falta que ese dato salga en los CSV de auditoría.
 
-```
-[33600, 38700, 35800, 27300, 123300, 276400, 225000, 287900, 190400, 164900, 137600, 109600]
-```
+## 2. Confirmado: los buckets de días son el mismo "tramo" que ya usan las tarifas
 
-**La columna Tn NO se completa igual para todas las cuentas.** Sólo
-`ALMACENAJE (IN/STORAGE/OUT)` traen la tonelada real en `cantidad`. Para
-`ROUND TRIP`, `FLETE DEPOSITO`, `CONSOLIDADO`, `TERMINAL`, `CROSS DOCKING`,
-`GASTOS THC`, `DESPACHANTE`, el evento está expresado **por contenedor o por
-viaje** (`cantidad = 1`), no en toneladas. Para esas filas el Resumen en Tn
-requiere un **join** con `asignaciones_elegidas.csv` (toneladas por
-`id_asignacion`/`id_contenedor`) o `ejecucion_arcos.csv` (toneladas por arco
-de carga), usando `id_contenedor` / `codigo_pedido` como clave — el join es
-viable (las claves están disponibles) pero no viene resuelto en el CSV.
+Los encabezados `0-31, 31-59, 59-90, …, 334-999` del Resumen **no son un
+invento del reporte** — son literalmente la grilla de tramos que
+`Maestro_Simulacion.xlsx` ya usa para todas las tarifas (`Tarifa_almacenaje`,
+`Consolidado`, `Cross_docking`, `Despachante`, `Gastos_terminal`,
+`TarifaRoundTrip`, `Tipo_cambio`), descripta en ADR-068/070
+(`Fila.columnasDeRango()` + `leerTramos()`), y el ADR-070 usa el bucket
+`'334-999'` en un ejemplo numérico palabra por palabra. Conclusión: el
+Resumen agrupa por el mismo eje de tramos que el modelo ya sabe leer y
+escribir — no hay que definir un bucketing nuevo, alcanza con `dia_campania`
+contra esa misma grilla.
 
-## 2. Gaps que requieren decisión/MOD antes de generar el Resumen
+## 3. El único gap real: el `material` no sale en los CSV de auditoría
 
-1. **Materiales (dimensión "material" del Resumen):** el Resumen pide 5
-   códigos (`AEL`, `CDL`, `JCCL`, `JCL`, `PCL` — parecen productos de la
-   industria del limón: aceite esencial, cáscara deshidratada, jugo
-   concentrado clarificado, jugo concentrado, cáscara/pellets). El modelo
-   sólo emite 3 (`ACEITE`, `CASCARA`, `JUGO`). Falta el mapeo 1 a 1 (o el
-   modelo tiene que desdoblar sus 3 productos en 5).
-2. **`AEL` (aceite) no tiene ningún movimiento de IN/STORAGE/OUT** en esta
-   corrida — sólo aparece en DESPACHANTE/FLETE/THC/TERMINAL/ROUND TRIP. ¿Es
-   así en la operación real (el aceite no pasa por depósito propio) o falta
-   emitir esos eventos para `ACEITE` en el modelo?
-3. **`FLETE_PRODUCTO` vs "FLETE DEPOSITO":** el nombre de la cuenta del
-   Resumen sugiere flete *entre depósitos*, mientras que `FLETE_PRODUCTO` en
-   el zip es el flete de *producto por viaje* (planta→terminal, etc.). Hay
-   que confirmar que son la misma cuenta contable o si falta otra categoría
-   de costo específica de "flete inter-depósito".
-4. **Tn para cuentas por contenedor/viaje** (todas menos ALMACENAJE): requiere
-   el join descripto arriba. Alternativa más limpia: pedir que el modelo
-   agregue una columna `toneladas_asociadas` directamente en
-   `costos_eventos.csv` para esos eventos (evita el join en el reporte).
-5. **`OPORTUNIDAD_FRIO` y `PENALIDAD_SOBRECARGA`** no tienen cuenta en el
-   Resumen. En esta corrida su importe es siempre 0, así que no afectan el
-   resultado, pero si en otras corridas toman valor > 0, ¿se deben mostrar
-   en alguna fila del Resumen o quedan fuera de esta vista contable?
-6. **Definición de "Tn" en ALMACENAJE (STORAGE):** al sumar `cantidad` día a
-   día se obtiene toneladas-día acumuladas (no un promedio ni un stock
-   puntual). ¿Es esa la métrica esperada en esa columna, o el Resumen quiere
-   otra cosa (ej. promedio de stock del período, o Tn ingresadas)?
-7. **Buckets de antigüedad:** `0-31…304-334, 334-999` calzan bien con
-   `dia_campania` (1 a 365) tomando el último bucket como cola/cierre de
-   campaña. Asumí que el eje correcto es `dia_campania` (no `dia` de
-   simulación corrida, ni fecha de vencimiento del pedido). A confirmar.
-8. **Escenario/réplica:** el zip trae un solo run (`E-00`, réplica 0). El
-   Resumen no tiene columnas de escenario/réplica — ¿el reporte es por
-   corrida (un Excel por escenario) o hay que consolidar/promediar réplicas?
+`Pedido`, `LoteProducto` y `ContenedorExportacion` ya tienen el campo
+`material` (ADR-067/069). Pero **ninguna de las 4 tablas de auditoría lo
+exporta**: ni `costos_eventos.csv` (`RegistroCostos.Cargo`), ni
+`asignaciones_elegidas.csv` (`AsignacionPedido`), ni
+`decisiones_alternativas.csv`, ni `snapshot_inventario.csv`. Por eso
+`Ejemplo_11.zip` sólo distingue por `producto` (3 valores) y no por
+`material` (5 valores): la dimensión existe en el modelo, pero se pierde al
+volcar a CSV.
 
-## 3. Próximo paso si se confirman los mapeos
+### Propuesta de MOD — quirúrgica, sin tocar `RegistroCostos.Cargo`
 
-Con las respuestas a la sección 2, el reporte se arma con un script (Python
-+ `openpyxl`, o una tabla dinámica) que:
-1. Lee `costos_eventos.csv` (+ join con `asignaciones_elegidas.csv` para Tn
-   de cuentas no-almacenaje).
-2. Aplica el mapeo `categoria → Cuenta` y `producto → material`.
-3. Bucketiza por `dia_campania` en los 12 rangos del Resumen.
-4. Vuelca a la hoja `Resumen (a_completar)` respetando el orden de filas del
-   template (`material` agrupado dentro de cada `Cuenta`/`Unidad`).
+En vez de agregar `material` a la clase `Cargo` y re-cablear sus 15 sitios
+de `registro.registrar(...)`, alcanza con resolverlo en
+`Main.exportarCostosEventos()` (`model_src/Main.java:3098`), que ya arma
+lookups parecidos (`asignacionDeContenedor`, `decisionDeAsignacion`) a
+partir de `pedido.contenedores` / `pedido.asignaciones`:
 
-No hace falta re-simular nada para probar esto: alcanza con el
-`Ejemplo_11.zip` ya generado. El único cambio de *modelo* (MOD real) sería
-el punto 4 (agregar `toneladas_asociadas` al costo del evento) si se prefiere
-esa vía en vez del join en el reporte.
+1. Agregar un lookup `materialDeContenedor` (`idContenedor → contenedor.material`),
+   igual que el `asignacionDeContenedor` que ya existe ahí.
+2. Agregar un lookup `materialDeLote` (`idLote → lote.material`), recorriendo
+   `lotes` (o vía `buscarLote(...)`, ajustando el tipo — `Cargo.idLote` es
+   `String` y `LoteProducto.idLote` es `int`).
+3. Resolver por cargo: contenedor si `codigoContenedor` no es vacío → si no,
+   lote si `idLote` no es vacío → si no, `""` (cargos de alcance `RED`, como
+   `OPORTUNIDAD_FRIO`/`PENALIDAD_SOBRECARGA`, quedan sin material — no
+   aplican al Resumen de todos modos, ver §4).
+4. Agregar la columna `material` a `encabezadoCostosEventos()` y a la fila
+   que arma `exportarCostosEventos()` (`Main.java:3092` y `3186-3202`).
+5. Mismo patrón, más simple, en `AsignacionPedido.encabezadoCsv()`/`toCsv()`:
+   pasar `pedido.material` como parámetro nuevo (la asignación ya vive
+   colgada de un `Pedido` que ya tiene el dato).
+6. Bump de `AuditoriaRed.VERSION_ESQUEMA` (`"ADR-064.1"` → `"ADR-064.2"` o
+   similar) porque cambia una columna del contrato, siguiendo la convención
+   que el propio repo documenta en `AuditoriaRed.java`.
+7. Nuevo ADR corto (`ADR-071` sería el próximo número libre) documentando el
+   cambio, más entrada en `Roadmap.md` y `CHANGELOG.md`, siguiendo el patrón
+   que el resto del repo sigue estrictamente para cualquier cambio de
+   contrato.
+
+Esto es plumbing puro (no cambia ninguna decisión de negocio ni un número de
+la campaña) y no toca la lógica de costeo ni las 15 llamadas a
+`registro.registrar(...)`.
+
+## 4. Columna Tn: directa para almacenaje, requiere join para el resto
+
+Con `material` agregado a `costos_eventos.csv`, la columna **USD** del
+Resumen queda 100% resuelta para las 9 cuentas mapeables (ver tabla de
+`categoria → Cuenta` más abajo). La columna **Tn**:
+
+- **ALMACENAJE (IN/STORAGE/OUT):** directa — `cargo.cantidad` ya está en
+  toneladas para esas 3 categorías (`IN_DEPOSITO`, `ALMACENAMIENTO`,
+  `OUT_DEPOSITO`).
+- **ROUND TRIP, FLETE DEPOSITO, CONSOLIDADO, TERMINAL, CROSS DOCKING, GASTOS
+  THC, DESPACHANTE:** el evento de costo está expresado por contenedor o por
+  viaje (`cantidad = 1`), no en toneladas. Con `material` ya agregado a
+  `asignaciones_elegidas.csv` (punto 3.5), el reporte puede hacer un join
+  `costos_eventos.id_asignacion → asignaciones_elegidas.id_asignacion` y
+  tomar de ahí `toneladas_despachadas`/`toneladas_entregadas` — no hace
+  falta otro cambio de modelo, es join en el script del reporte.
+
+| categoria (zip) | Cuenta (Resumen) |
+|---|---|
+| `IN_DEPOSITO` | ALMACENAJE (IN) |
+| `ALMACENAMIENTO` | ALMACENAJE (STORAGE) |
+| `OUT_DEPOSITO` | ALMACENAJE (OUT) |
+| `ROUND_TRIP` | ROUND TRIP |
+| `FLETE_PRODUCTO` | FLETE DEPOSITO *(a confirmar el nombre, ver preguntas)* |
+| `CONSOLIDACION` | CONSOLIDADO |
+| `COSTO_TERMINAL` | TERMINAL |
+| `CROSS_DOCK` | CROSS DOCKING |
+| `THC` | GASTOS THC |
+| `DESPACHANTE` | DESPACHANTE |
+| `OPORTUNIDAD_FRIO` | *(sin cuenta en el Resumen; $0 en esta corrida)* |
+| `PENALIDAD_SOBRECARGA` | *(sin cuenta en el Resumen; $0 en esta corrida)* |
+
+## 5. Ya validado con datos reales
+
+Armé un pivot en Python sobre `costos_eventos.csv` del zip (105.461 filas)
+bucketizando por `dia_campania` en los 12 tramos del Resumen: la columna USD
+sale sin problema para las 9 cuentas mapeadas (ejemplo real, `JUGO → FLETE
+DEPOSITO`, USD por tramo: `[33600, 38700, 35800, 27300, 123300, 276400,
+225000, 287900, 190400, 164900, 137600, 109600]`). Falta únicamente que el
+zip traiga `material` en vez de (o además de) `producto` para separar `JUGO`
+en `JCL`/`JCCL`/`PCL`.
+
+## 6. Preguntas abiertas (única parte que sigue bloqueada)
+
+Ver preguntas en el chat.
