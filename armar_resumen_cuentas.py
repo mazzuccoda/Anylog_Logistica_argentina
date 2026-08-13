@@ -95,6 +95,9 @@ def armar(carpeta, plantilla, salida):
     materiales_vistos = set()
     usando_producto_como_material = False
     flete_sin_tn = 0.0
+    # Nunca se descarta plata en silencio: todo cargo mapeable a una Cuenta pero sin
+    # material resuelto se acumula aca en vez de desaparecer del total.
+    usd_sin_material = defaultdict(float)
 
     with open(ruta_costos, newline="", encoding="utf-8") as f:
         lector = csv.DictReader(f)
@@ -109,6 +112,7 @@ def armar(carpeta, plantilla, salida):
 
             material = (fila["material"] if tiene_material else fila["producto"]).strip()
             if not material:
+                usd_sin_material[cuenta] += float(fila["importe_usd"])
                 continue
             materiales_vistos.add(material)
 
@@ -160,6 +164,15 @@ def armar(carpeta, plantilla, salida):
     if filas_sin_dato:
         print(f"{len(filas_sin_dato)} filas de la plantilla quedaron en 0 "
               "(combinacion material/cuenta sin cargos en la corrida).")
+    if usd_sin_material:
+        total = sum(usd_sin_material.values())
+        print(f"AVISO IMPORTANTE: USD {total:,.0f} de cargos con Cuenta mapeada pero SIN "
+              "material resuelto no entraron a ninguna fila del Resumen (para no "
+              "inventar a que material pertenecen). Por cuenta:")
+        for cuenta, monto in sorted(usd_sin_material.items(), key=lambda kv: -kv[1]):
+            print(f"  - {cuenta}: USD {monto:,.0f}")
+        print("  Si este numero es alto, revisar si el modelo tiene la resolucion de "
+              "material por pedido de ADR-071 (fallback agregado tras Ejemplo_12).")
     if flete_sin_tn:
         print(f"AVISO: FLETE DEPOSITO quedó con Tn en 0 a proposito -- USD "
               f"{flete_sin_tn:,.0f} de FLETE_PRODUCTO no tienen id_asignacion en "

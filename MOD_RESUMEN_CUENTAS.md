@@ -198,3 +198,39 @@ python3 armar_resumen_cuentas.py <carpeta_resultados_nueva_corrida> Resumen_cuen
 apenas tengas una corrida de `E-00` hecha con el modelo parchado, y va a
 salir completo (salvo el Tn de `FLETE DEPOSITO`, con el aviso explícito de
 por qué).
+
+## 8. Corrida real (`Ejemplo_12.zip`, esquema `ADR-064.2`) — confirma y corrige
+
+El usuario compiló y corrió el modelo con el MOD aplicado. Resultado clave:
+**los 5 materiales del `costos_eventos.csv`/`asignaciones_elegidas.csv` de
+esta corrida son exactamente `AEL`, `CDL`, `JCCL`, `JCL`, `PCL`** — calzan
+1 a 1 con los códigos de la plantilla `Resumen_cuentas.xlsx`, sin necesidad
+de ningún mapeo manual (a diferencia de lo que había que asumir con
+`Ejemplo_11.zip`, que sólo tenía `ACEITE`/`CASCARA`/`JUGO`).
+
+Corriendo `armar_resumen_cuentas.py` contra esta carpeta encontré un gap
+real: **706 900 USD de `FLETE_PRODUCTO` (10 % del total de la corrida)
+tenían `material` vacío** y el script los excluía del Excel — en vez de
+dejarlos pasar en silencio, ahora los reporta con nombre y monto por
+cuenta (`AVISO IMPORTANTE`). La causa: el flete por viaje del circuito
+`CONSOLIDACION_TERMINAL` se cobra **antes de que exista el contenedor y
+sin lote asociado**, así que ni `materialDeContenedor` ni `materialDeLote`
+podían resolverlo — pero el cargo sí sabe de qué `codigo_pedido` es, y un
+pedido nunca mezcla materiales entre sus asignaciones (0 casos en la
+corrida). Agregué un tercer nivel de resolución en el modelo
+(`materialDePedido`, mismo commit `claude/adr-071-material-auditoria`) que
+cierra el 100 % del importe: `6 472 344 + 706 900 = 7 179 244 USD`, exacto
+contra el total de cargos `CAJA` de la corrida.
+
+**Con los datos de `Ejemplo_12.zip` tal cual** (sin el fallback por pedido,
+que es posterior a esa corrida) generé `Resumen_cuentas_E-00.xlsx`: sale
+completo salvo `AEL → FLETE DEPOSITO (USD)` — que cae justo dentro de esos
+706 900 USD sin resolver — y el Tn de `FLETE DEPOSITO` para los 5
+materiales (limitación de la sección 6, sigue abierta). El resto de ceros
+de la plantilla son de negocio, no del reporte: `AEL` no pasa por depósito
+propio (sin `ALMACENAJE IN/STORAGE/OUT`) y `AEL`/`CDL` no tienen
+`CONSOLIDADO` ni `CROSS DOCKING` en esta corrida.
+
+**Para el reporte 100 % completo:** volver a correr `E-00` con el último
+commit de la rama (`claude/adr-071-material-auditoria`) y correr
+`armar_resumen_cuentas.py` sobre esa carpeta nueva.
