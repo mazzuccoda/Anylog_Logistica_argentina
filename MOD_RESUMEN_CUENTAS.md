@@ -278,3 +278,29 @@ cuentas:** volver a correr `E-00` con el commit más reciente de la rama
 (incluye ADR-071 completo + ADR-072) y correr `armar_resumen_cuentas.py` de
 nuevo — el script detecta solo la columna `toneladas` y deja de usar el
 join aproximado.
+
+## 10. Cierre — MOD verificado con una corrida real completa
+
+Las dos corridas intermedias (`Ejemplo_14`, `Ejemplo_15`) resultaron ser el
+mismo dataset re-empaquetado, byte a byte igual a `Ejemplo_12` — el `.alp`
+abierto en el IDE (hash `8ab11e09…`) coincidía con el commit `2eba613`, dos
+commits atrás de la punta de la rama. Se le pasó al usuario el `.alp` de la
+punta (`c4802af`, hash `35794447…`) para reemplazar en el IDE.
+
+`Ejemplo_16.zip` es la corrida con el `.alp` correcto: `version_esquema:
+ADR-064.3`, columna `toneladas` sin vacíos ni negativos, `material` vacío
+sólo en `OPORTUNIDAD_FRIO`/`PENALIDAD_SOBRECARGA` (correcto, son cargos de
+red). `armar_resumen_cuentas.py` contra esta corrida da:
+
+- **USD total del Resumen: 7 179 244,34**, exacto contra el total de cargos
+  `CAJA` de la corrida — cero USD sin atribuir.
+- **`FLETE DEPOSITO (Tn)` ya no está en cero** para ningún material: tonelada
+  exacta por tramo, capturada en el cargo (ADR-072), sin join.
+- Quedan 12 celdas en 0, todas de negocio: `AEL` no pasa por depósito propio
+  (`ALMACENAJE IN/STORAGE/OUT`) y `AEL`/`CDL` no tienen `CONSOLIDADO` ni
+  `CROSS DOCKING` en este escenario.
+
+**El MOD queda cerrado**: no hay más limitaciones conocidas pendientes en
+`armar_resumen_cuentas.py` para este escenario (`E-00`). Falta compilar y
+correr en el IDE de AnyLogic para cualquier corrida nueva (otro escenario,
+otra réplica), pero el camino ya está probado de punta a punta.
