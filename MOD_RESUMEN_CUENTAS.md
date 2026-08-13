@@ -234,3 +234,47 @@ propio (sin `ALMACENAJE IN/STORAGE/OUT`) y `AEL`/`CDL` no tienen
 **Para el reporte 100 % completo:** volver a correr `E-00` con el último
 commit de la rama (`claude/adr-071-material-auditoria`) y correr
 `armar_resumen_cuentas.py` sobre esa carpeta nueva.
+
+## 9. `toneladas` explícito en `costos_eventos` (ADR-072) — cierra el Tn de FLETE DEPOSITO
+
+El usuario preguntó específicamente por el Tn en 0 de `FLETE DEPOSITO` y pidió
+alternativas antes de tocar nada. Se evaluaron 3 (documentadas en el chat):
+resolver por lote (descartada — `LoteProducto.toneladas` es un balance de
+stock que cambia día a día, no la tonelada de un envío puntual; y el call
+site que genera el grueso del gap ni pasa `idLote`), aproximar en el reporte
+vía join (la que había, no aplica a `FLETE_PRODUCTO` porque nunca tiene
+`id_asignacion`), y capturar `toneladas` en el momento del cargo (elegida).
+
+**Implementado** en `mazzuccoda/Anylogic_log_arg_2026`, mismo branch
+`claude/adr-071-material-auditoria` (esquema `ADR-064.3`):
+`RegistroCostos.Cargo` gana el campo `toneladas`, capturado en el momento
+del devengo. `registro.registrar(...)` se overloadeó: la firma vieja
+(17 args) sigue igual para los 9 sitios que ya facturan por tonelada; sólo
+6 sitios (los que facturan por contenedor o viaje: `FLETE_PRODUCTO` rama
+`USD_VIAJE`, `ROUND_TRIP`, `CONSOLIDACION`/`CROSS_DOCK`, `THC`,
+`COSTO_TERMINAL`, `DESPACHANTE`) pasan a la firma nueva con la tonelada
+real, que ya estaba en scope en cada uno (`toneladas`/`envio.toneladas`).
+Verificación de aridad de los 15 sitios con un script ad hoc (cuenta
+argumentos de nivel superior, ignora comentarios `//`): 17 en los que no
+cambian, 18 en los 6 nuevos, sin errores.
+
+**Qué se pudo validar sin AnyLogic (no hay motor de simulación acá) y qué
+no:** actualicé `armar_resumen_cuentas.py` para usar la columna `toneladas`
+directo cuando existe (sin joins) y lo corrí con una columna `toneladas`
+sintética armada a partir de `asignaciones_elegidas.csv` — confirma que la
+plomería del reporte funciona y que el camino con `toneladas` deja de emitir
+el aviso de "FLETE DEPOSITO en 0". **Lo que no pude ejercitar con los CSV ya
+exportados** es el sub-caso de flete de *transferencia entre depósitos*
+(`movidas`, sin `codigo_pedido`): esas filas no llevan ninguna referencia
+exportada a la tonelada transferida más que el propio código nuevo, así que
+no hay forma de reconstruir un valor "de verdad" para probarlo offline. Lo
+verifiqué leyendo el código a mano: `movidas` es una variable ya calculada
+en los dos call sites de transferencia y se pasa tal cual al parámetro
+`toneladas` de `registrarFleteProducto(...)`, sin ambigüedad — pero la
+prueba definitiva es correr el modelo.
+
+**Para tener USD y Tn 100 % exactos, sin joins ni aproximaciones, en las 10
+cuentas:** volver a correr `E-00` con el commit más reciente de la rama
+(incluye ADR-071 completo + ADR-072) y correr `armar_resumen_cuentas.py` de
+nuevo — el script detecta solo la columna `toneladas` y deja de usar el
+join aproximado.

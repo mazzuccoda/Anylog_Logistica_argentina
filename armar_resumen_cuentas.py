@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Arma Resumen_cuentas.xlsx a partir de la auditoria de red del modelo (ADR-064/071).
+"""Arma Resumen_cuentas.xlsx a partir de la auditoria de red del modelo (ADR-064/071/072).
 
 Uso:
     python3 armar_resumen_cuentas.py <carpeta_resultados> <plantilla.xlsx> <salida.xlsx>
@@ -9,10 +9,15 @@ Uso:
 <plantilla.xlsx> es el Resumen_cuentas.xlsx con la hoja "Resumen (a_completar)"
 vacia (fila 1 encabezado, filas 2-101 material/cuenta/unidad ya armadas).
 
-Compatibilidad: si costos_eventos.csv todavia no trae la columna "material"
-(corridas anteriores a ADR-071), cae a "producto" y solo completa 3 de las
-5 filas de material por cuenta (ACEITE/CASCARA/JUGO en vez de AEL/CDL/JCCL/
-JCL/PCL) -- vuelve a andar completo apenas se recorra con el modelo parchado.
+Compatibilidad hacia atras (segun que columnas tenga costos_eventos.csv):
+- Sin "material" (pre-ADR-071): cae a "producto", solo completa 3 de los 5
+  materiales (ACEITE/CASCARA/JUGO en vez de AEL/CDL/JCCL/JCL/PCL).
+- Sin "toneladas" (pre-ADR-072, con "material" ya presente): Tn sale directo
+  de "cantidad" para ALMACENAJE (IN/STORAGE/OUT) y se aproxima con un join
+  contra asignaciones_elegidas.csv para las cuentas por contenedor/viaje;
+  FLETE DEPOSITO queda con Tn en 0 (esos cargos no tienen id_asignacion).
+- Con "toneladas" (ADR-072): Tn exacto para las 10 cuentas, sin joins ni
+  aproximaciones -- incluido FLETE DEPOSITO.
 """
 import csv
 import sys
@@ -88,12 +93,11 @@ def armar(carpeta, plantilla, salida):
     ruta_costos = f"{carpeta}/costos_eventos.csv"
     ruta_asignaciones = f"{carpeta}/asignaciones_elegidas.csv"
 
-    tn_por_contenedor = cargar_tn_por_contenedor_por_asignacion(ruta_asignaciones)
-
     usd = defaultdict(lambda: [0.0] * 12)
     tn = defaultdict(lambda: [0.0] * 12)
     materiales_vistos = set()
     usando_producto_como_material = False
+    usando_join_para_tn = False
     flete_sin_tn = 0.0
     # Nunca se descarta plata en silencio: todo cargo mapeable a una Cuenta pero sin
     # material resuelto se acumula aca en vez de desaparecer del total.
@@ -101,8 +105,16 @@ def armar(carpeta, plantilla, salida):
 
     with open(ruta_costos, newline="", encoding="utf-8") as f:
         lector = csv.DictReader(f)
-        tiene_material = "material" in (lector.fieldnames or [])
+        campos = lector.fieldnames or []
+        tiene_material = "material" in campos
+        tiene_toneladas = "toneladas" in campos
         usando_producto_como_material = not tiene_material
+        usando_join_para_tn = not tiene_toneladas
+
+        tn_por_contenedor = (
+            {} if tiene_toneladas
+            else cargar_tn_por_contenedor_por_asignacion(ruta_asignaciones)
+        )
 
         for fila in lector:
             categoria = fila["categoria"]
@@ -121,7 +133,11 @@ def armar(carpeta, plantilla, salida):
 
             usd[clave][b] += float(fila["importe_usd"])
 
-            if categoria in CANTIDAD_ES_TN:
+            if tiene_toneladas:
+                # ADR-072: toneladas exacta, capturada en el momento del cargo -- vale
+                # para las 10 cuentas por igual, sin joins ni aproximaciones.
+                tn[clave][b] += float(fila["toneladas"])
+            elif categoria in CANTIDAD_ES_TN:
                 tn[clave][b] += float(fila["cantidad"])
             elif categoria in CATEGORIAS_TN_POR_JOIN:
                 id_asig = fila["id_asignacion"]
@@ -129,7 +145,7 @@ def armar(carpeta, plantilla, salida):
                     tn[clave][b] += tn_por_contenedor.get(id_asig, 0.0)
             elif categoria == "FLETE_PRODUCTO":
                 # id_asignacion siempre vacio en estos cargos (se registran contra el
-                # pedido, no contra un contenedor): no hay join confiable todavia.
+                # pedido, no contra un contenedor): no hay join confiable sin ADR-072.
                 flete_sin_tn += float(fila["importe_usd"])
 
     wb = openpyxl.load_workbook(plantilla)
@@ -161,6 +177,15 @@ def armar(carpeta, plantilla, salida):
               "todavia a esta corrida) -- se uso 'producto' como aproximacion. Volver a "
               "correr esta rutina con una corrida posterior al MOD para las 5 filas de "
               "material completas (AEL/CDL/JCCL/JCL/PCL).")
+    if usando_join_para_tn:
+        print("AVISO: costos_eventos.csv no tiene columna 'toneladas' (ADR-072 no aplicado "
+              "todavia a esta corrida) -- el Tn de ROUND TRIP/CONSOLIDADO/TERMINAL/CROSS "
+              "DOCKING/GASTOS THC/DESPACHANTE es una aproximacion (toneladas_despachadas / "
+              "contenedores_creados de la asignacion), y el de FLETE DEPOSITO queda en 0. "
+              "Volver a correr esta rutina con una corrida posterior al MOD para Tn exacto.")
+    else:
+        print("Tn de las 10 cuentas, incluida FLETE DEPOSITO: exacto (columna 'toneladas' "
+              "de ADR-072, sin joins ni aproximaciones).")
     if filas_sin_dato:
         print(f"{len(filas_sin_dato)} filas de la plantilla quedaron en 0 "
               "(combinacion material/cuenta sin cargos en la corrida).")
@@ -177,7 +202,7 @@ def armar(carpeta, plantilla, salida):
         print(f"AVISO: FLETE DEPOSITO quedó con Tn en 0 a proposito -- USD "
               f"{flete_sin_tn:,.0f} de FLETE_PRODUCTO no tienen id_asignacion en "
               "costos_eventos.csv (se cobran contra el pedido, no contra un contenedor), "
-              "asi que no hay join confiable con asignaciones_elegidas.csv todavia. "
+              "asi que no hay join confiable sin la columna 'toneladas' de ADR-072. "
               "USD de esa cuenta SI esta completo.")
 
 
